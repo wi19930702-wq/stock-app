@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import random
+import yfinance as yf
 
 # --- 1. 手機版面設定 ---
 st.set_page_config(page_title="隔日沖戰情室", layout="centered")
@@ -20,8 +20,6 @@ st.markdown("""
     .label { font-size: 14px; color: #aaaaaa; }
     .resistance { color: #ff6c6c; font-weight: bold; }
     .support { color: #4bceff; font-weight: bold; }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,18 +34,19 @@ def calculate_cdp(high, low, close):
 
 # --- 3. 介面開始 ---
 st.title("📱 隔日沖隨身操盤")
+st.caption("資料來源：Yahoo Finance (延遲報價)")
 
-tab1, tab2 = st.tabs(["🧮 快速計算機", "📡 市場雷達 (模擬)"])
+tab1, tab2 = st.tabs(["🧮 手動計算機", "📈 查詢真實股價"])
 
-# === 功能一：手動計算機 ===
+# === 功能一：手動計算機 (最推薦) ===
 with tab1:
-    st.markdown("### 輸入今日 K 線數據")
+    st.info("💡 這是最準確的方式！請看著您的看盤軟體輸入數據。")
     col1, col2 = st.columns(2)
     with col1:
-        p_close = st.number_input("收盤價", value=100.0, step=0.5)
-        p_high = st.number_input("最高價", value=100.0, step=0.5)
+        p_close = st.number_input("收盤價", value=222.0, step=0.5)
+        p_high = st.number_input("最高價", value=225.0, step=0.5)
     with col2:
-        p_low = st.number_input("最低價", value=95.0, step=0.5)
+        p_low = st.number_input("最低價", value=220.0, step=0.5)
         
     if st.button("計算明日點位", type="primary", use_container_width=True):
         ah, nh, nl, al, cdp = calculate_cdp(p_high, p_low, p_close)
@@ -66,41 +65,46 @@ with tab1:
         </div>
         """, unsafe_allow_html=True)
 
-# === 功能二：市場雷達 (隨機生成 10 檔) ===
+# === 功能二：真實股價查詢 ===
 with tab2:
-    st.markdown("### 🔥 主力鎖碼熱門股")
+    st.markdown("### 🔍 輸入代號抓取股價")
+    stock_id = st.text_input("輸入股票代號 (例如 2317)", "2317")
     
-    # 這裡增加了一個按鈕，點下去會隨機產生資料
-    if st.button("🔄 重新掃描市場", type="primary", use_container_width=True):
-        
-        # 這是股票清單庫，你可以自己加更多名字進去
-        stock_names = ["2330 台積電", "2317 鴻海", "2603 長榮", "3231 緯創", "2382 廣達", "3035 智原", "1519 華城", "4966 譜瑞", "6669 緯穎", "2454 聯發科"]
-        brokers = ["凱基-台北", "美林", "摩根大通", "虎尾幫", "富邦-建國"]
-        
-        # 隨機挑選並生成數據
-        for name in stock_names:
-            base_price = random.randint(50, 800)
-            close = base_price
-            high = int(base_price * 1.05) # 模擬大漲
-            low = int(base_price * 0.98)
-            vol = random.randint(2000, 50000)
-            broker = random.choice(brokers)
-            
-            ah, nh, nl, al, cdp = calculate_cdp(high, low, close)
-            
-            st.markdown(f"""
-            <div class="stock-card">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 18px; font-weight: bold;">{name}</span>
-                    <span style="background-color: #ff4b4b; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px;">{broker}</span>
-                </div>
-                <div style="margin-top: 5px; color: #ddd; font-size: 13px;">買超: {vol} 張 | 收盤: {close}</div>
-                <hr style="margin: 8px 0; border-color: #555;">
-                <div style="display: flex; justify-content: space-between; text-align: center;">
-                    <div><span class="label">壓力 (NH)</span><br><span class="resistance">{nh}</span></div>
-                    <div><span class="label">支撐 (NL)</span><br><span class="support">{nl}</span></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("👆 請點擊上方按鈕開始掃描")
+    if st.button("抓取最新股價", use_container_width=True):
+        try:
+            with st.spinner('正在連線 Yahoo Finance...'):
+                stock = yf.Ticker(f"{stock_id}.TW")
+                # 取得最新一天的資料
+                data = stock.history(period="1d")
+                
+                if not data.empty:
+                    # 抓取真實數據
+                    real_close = data['Close'].iloc[-1]
+                    real_high = data['High'].iloc[-1]
+                    real_low = data['Low'].iloc[-1]
+                    
+                    # 計算
+                    ah, nh, nl, al, cdp = calculate_cdp(real_high, real_low, real_close)
+                    
+                    st.success(f"成功抓到 {stock_id} 股價：{round(real_close, 2)}")
+                    st.markdown(f"""
+                    <div class="stock-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 18px; font-weight: bold;">{stock_id} (即時運算)</span>
+                        </div>
+                        <div style="margin-top: 5px; color: #ddd; font-size: 13px;">
+                            收盤: {round(real_close, 2)} | 高: {real_high} | 低: {real_low}
+                        </div>
+                        <hr style="margin: 8px 0; border-color: #555;">
+                        <div style="display: flex; justify-content: space-between; text-align: center;">
+                            <div><span class="label">壓力 (NH)</span><br><span class="resistance">{nh}</span></div>
+                            <div><span class="label">支撐 (NL)</span><br><span class="support">{nl}</span></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    st.warning("⚠️ 注意：Yahoo 資料可能有 15 分鐘延遲，且不包含主力籌碼資訊。")
+                else:
+                    st.error("找不到此股票資料，請確認代號是否正確。")
+        except Exception as e:
+            st.error(f"發生錯誤：{e}")
+
