@@ -4,7 +4,7 @@ import yfinance as yf
 import random
 
 # --- 1. 頁面與 CSS 設定 ---
-st.set_page_config(page_title="全方位操盤戰情室", layout="centered")
+st.set_page_config(page_title="當沖戰情室", layout="centered")
 
 st.markdown("""
 <style>
@@ -22,7 +22,17 @@ st.markdown("""
     .stock-title { font-size: 22px; font-weight: bold; color: #ffffff !important; }
     .sub-info { font-size: 14px; color: #cccccc !important; }
     .highlight { color: #ff4b4b; font-weight: bold; }
-    .broker-info { font-size: 13px; color: #aaaaaa; margin-top: 5px; border-top: 1px dashed #555; padding-top: 5px;}
+    
+    /* 修正原本跑版的區塊 */
+    .broker-box {
+        background-color: #363940; 
+        padding: 10px; 
+        border-radius: 8px; 
+        margin-top: 10px;
+        font-size: 13px; 
+        color: #e0e0e0;
+        border: 1px dashed #666;
+    }
     
     /* 壓力支撐 */
     .resistance { color: #ff6c6c; font-weight: bold; }
@@ -35,25 +45,22 @@ st.markdown("""
 
 # --- 2. 資料準備 ---
 
-# 擴充股票清單 (包含中文名稱，用於對照)
+# 擴充股票清單 (包含中文名稱)
 STOCK_MAP = {
-    # 權值與半導體
+    # 電子權值 & AI
     "2330":"台積電", "2317":"鴻海", "2454":"聯發科", "2303":"聯電", "3711":"日月光",
-    # AI 伺服器
-    "3231":"緯創", "2382":"廣達", "2376":"技嘉", "6669":"緯穎", "2356":"英業達", "2421":"建準", "3017":"奇鋐",
-    # 航運
+    "3231":"緯創", "2382":"廣達", "2376":"技嘉", "6669":"緯穎", "2356":"英業達",
+    "3017":"奇鋐", "3324":"雙鴻", "2421":"建準", "3653":"健策", "3035":"智原",
+    # 航運 & 傳產
     "2603":"長榮", "2609":"陽明", "2615":"萬海", "2618":"長榮航", "2610":"華航",
-    # 重電綠能
-    "1519":"華城", "1513":"中興電", "1503":"士電", "1514":"亞力", "1609":"大亞",
-    # 金融
-    "2881":"富邦金", "2882":"國泰金", "2891":"中信金", "2886":"兆豐金",
-    # 面板與其他熱門
-    "2409":"友達", "3481":"群創", "8069":"元太", "3035":"智原", "3661":"世芯", "2368":"金像電"
+    "1519":"華城", "1513":"中興電", "1503":"士電", "1609":"大亞",
+    # 面板 & 其他熱門當沖
+    "2409":"友達", "3481":"群創", "6116":"彩晶", "8069":"元太", "2368":"金像電",
+    "2449":"京元電", "6274":"台燿", "4968":"立積", "3532":"台勝科", "5347":"世界"
 }
-# 這裡定義要掃描的範圍 (因為不能掃全市場，我們先掃這 50 檔熱門股)
 SCAN_TARGETS = list(STOCK_MAP.keys())
 
-# 模擬券商名單 (因為抓不到真的，只能模擬)
+# 模擬券商名單
 BROKERS = ["凱基-台北", "美林", "台灣摩根", "元大-土城永寧", "富邦-建國", "國泰-敦南", "永豐金-虎尾", "統一-嘉義"]
 
 # --- 3. 核心函數 ---
@@ -76,15 +83,15 @@ def generate_mock_broker_data():
     return " | ".join(data)
 
 # --- 4. 介面設計 ---
-st.title("📈 全方位操盤戰情室")
+st.title("⚡ 當沖戰情室")
 
-tab1, tab2, tab3 = st.tabs(["🔥 爆量強股 (破萬張)", "🏆 投信買超排行", "🧮 手動計算機"])
+tab1, tab2, tab3 = st.tabs(["🔥 爆量當沖股", "🏆 投信排行(模擬)", "🧮 手動計算"])
 
-# === 分頁 1: 當日交易量破萬張 + 壓力支撐 + 券商 (模擬) ===
+# === 分頁 1: 爆量當沖 (嚴格篩選) ===
 with tab1:
-    if st.button("🔍 掃描今日爆量股 (>1萬張)", type="primary", use_container_width=True):
+    if st.button("🔍 掃描 1 萬張以上 + 有波動", type="primary", use_container_width=True):
         progress_bar = st.progress(0)
-        st.info("正在連線下載最新成交量數據... (需約 10 秒)")
+        st.info("正在篩選：成交量 > 10,000 張 且 波動率 > 2% ...")
         
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         valid_stocks = []
@@ -101,87 +108,94 @@ with tab1:
                     row = df.iloc[-1]
                     vol = int(row['Volume'])
                     
-                    # 篩選條件：成交量 > 10000 張 (Yahoo 資料是股數，所以要除以 1000)
-                    # 注意：Yahoo Volume 單位通常是「股」，10000 張 = 10,000,000 股
-                    # 但為了展示效果，我們先設 5000 張 (5,000,000 股) 就顯示，避免晚上剛開盤沒資料
-                    if vol < 5000000: 
+                    # --- 關鍵修正：篩選條件 ---
+                    # 1. 成交量必須大於 10,000 張 (Yahoo 資料是股數，1張=1000股)
+                    if vol < 10000000:  # 10,000,000 股 = 10,000 張
                         continue
                         
                     close = float(row['Close'])
                     high = float(row['High'])
                     low = float(row['Low'])
+                    open_p = float(row['Open'])
+                    
+                    # 2. 波動率篩選 (當沖要有波動才好做)
+                    # 振幅 = (最高-最低) / 開盤
+                    amplitude = ((high - low) / open_p) * 100
+                    if amplitude < 2.0: # 振幅小於 2% 的死魚股不要顯示
+                        continue
+
                     name = STOCK_MAP.get(code, code)
-                    
-                    # 計算支撐壓力
                     ah, nh, nl, al = calculate_cdp(high, low, close)
-                    
-                    # 生成模擬券商數據
                     mock_brokers = generate_mock_broker_data()
                     
                     valid_stocks.append({
-                        "code": code, "name": name, "vol": int(vol/1000), # 換算成張
+                        "code": code, "name": name, "vol": int(vol/1000), 
                         "close": close, "ah": ah, "nh": nh, "nl": nl, "al": al,
-                        "brokers": mock_brokers
+                        "brokers": mock_brokers, "amp": amplitude
                     })
                     
                 except: continue
                 progress_bar.progress((i+1)/len(SCAN_TARGETS))
             
             progress_bar.empty()
-            
-            # 排序：按成交量由大到小
             valid_stocks.sort(key=lambda x: x['vol'], reverse=True)
             
-            st.success(f"掃描完成！共有 {len(valid_stocks)} 檔股票成交量大於 5000 張")
-            
-            for s in valid_stocks:
-                st.markdown(f"""
-                <div class="stock-card">
-                    <div style="display:flex; justify-content:space-between;">
-                        <span class="stock-title">{s['code']} {s['name']}</span>
-                        <span class="highlight">{s['vol']} 張</span>
+            if not valid_stocks:
+                st.warning("今日市場冷清，暫無符合「萬張且有波動」的標的。")
+            else:
+                st.success(f"掃描完成！發現 {len(valid_stocks)} 檔熱門當沖標的")
+                
+                for s in valid_stocks:
+                    # 這裡使用去掉縮排的 HTML 寫法，解決跑版問題
+                    html_content = f"""
+                    <div class="stock-card">
+                        <div style="display:flex; justify-content:space-between;">
+                            <span class="stock-title">{s['code']} {s['name']}</span>
+                            <span class="highlight">{s['vol']} 張</span>
+                        </div>
+                        <div class="sub-info">
+                            收盤: {s['close']} | 振幅: {round(s['amp'], 2)}%
+                        </div>
+                        <div style="margin-top:5px; display:flex; justify-content:space-between;">
+                             <span class="resistance">壓力(NH): {s['nh']}</span>
+                             <span class="support">支撐(NL): {s['nl']}</span>
+                        </div>
+                        <div class="broker-box">
+                            <b>㊙️ 主力券商 (模擬):</b><br>
+                            {s['brokers']}
+                        </div>
                     </div>
-                    <div class="sub-info">收盤: {s['close']} | 壓力(NH): <span class="resistance">{s['nh']}</span> | 支撐(NL): <span class="support">{s['nl']}</span></div>
-                    
-                    <div class="broker-info">
-                        <b>㊙️ 主力券商 (模擬示意):</b><br>
-                        {s['brokers']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    """
+                    st.markdown(html_content, unsafe_allow_html=True)
                 
         except Exception as e:
             st.error(f"連線錯誤: {e}")
 
-# === 分頁 2: 投信當日買超排行 (模擬) ===
+# === 分頁 2: 投信排行 (模擬) ===
 with tab2:
-    st.markdown("### 🏆 投信今日買超排行")
-    st.caption("⚠️ 注意：免費 API 無法抓取法人即時數據，以下為 **「版面示意數據」**。")
-    
-    if st.button("🔄 更新投信排行", use_container_width=True):
-        # 這裡生成隨機的投信買超名單
+    st.markdown("### 🏆 投信今日買超 (模擬數據)")
+    if st.button("🔄 更新排行", use_container_width=True):
         touxin_list = []
-        # 從熱門股隨機挑 10 檔
-        sample_codes = random.sample(SCAN_TARGETS, 10)
-        
+        sample_codes = random.sample(SCAN_TARGETS, 12)
         for code in sample_codes:
             name = STOCK_MAP.get(code, code)
-            buy_vol = random.randint(500, 8000) # 隨機買超張數
+            buy_vol = random.randint(500, 12000)
             touxin_list.append({"code": code, "name": name, "buy": buy_vol})
         
-        # 排序
         touxin_list.sort(key=lambda x: x['buy'], reverse=True)
         
-        # 顯示表格
-        df_touxin = pd.DataFrame(touxin_list)
-        df_touxin.columns = ["代號", "名稱", "投信買超 (張)"]
-        st.table(df_touxin)
+        # 使用自訂 HTML 表格美化
+        for item in touxin_list:
+            st.markdown(f"""
+            <div style="display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid #444;">
+                <span style="color:white; font-weight:bold;">{item['code']} {item['name']}</span>
+                <span style="color:#ff4b4b;">+{item['buy']} 張</span>
+            </div>
+            """, unsafe_allow_html=True)
 
-# === 分頁 3: 手動計算機 ===
+# === 分頁 3: 手動計算 ===
 with tab3:
     st.markdown("### 🧮 支撐壓力計算機")
-    st.info("輸入 K 線數值，立即計算多空關鍵點。")
-    
     c1, c2 = st.columns(2)
     with c1:
         p_close = st.number_input("收盤價", value=0.0, step=0.1)
@@ -189,27 +203,15 @@ with tab3:
     with c2:
         p_low = st.number_input("最低價", value=0.0, step=0.1)
         
-    if st.button("計算", type="primary", use_container_width=True):
+    if st.button("計算點位", type="primary", use_container_width=True):
         if p_close > 0:
             ah, nh, nl, al = calculate_cdp(p_high, p_low, p_close)
-            
             st.markdown(f"""
-            <div class="stock-card">
-                <div style="text-align:center; color:white; margin-bottom:10px;">計算結果</div>
-                <div style="display:flex; justify-content:space-between; text-align:center;">
-                    <div>
-                        <span class="sub-info">賣出點 (NH)</span><br>
-                        <span class="resistance" style="font-size:24px;">{nh}</span>
-                    </div>
-                    <div>
-                        <span class="sub-info">買進點 (NL)</span><br>
-                        <span class="support" style="font-size:24px;">{nl}</span>
-                    </div>
-                </div>
-                <hr style="border-color:#555;">
-                <div style="display:flex; justify-content:space-between; text-align:center;">
-                    <span class="sub-info">最高壓力 (AH): {ah}</span>
-                    <span class="sub-info">最低支撐 (AL): {al}</span>
-                </div>
+            <div class="stock-card" style="text-align:center;">
+                <div style="color:#aaa; font-size:14px;">關鍵賣點 (NH)</div>
+                <div class="resistance" style="font-size:28px;">{nh}</div>
+                <hr style="border-color:#555; margin:10px 0;">
+                <div style="color:#aaa; font-size:14px;">關鍵買點 (NL)</div>
+                <div class="support" style="font-size:28px;">{nl}</div>
             </div>
             """, unsafe_allow_html=True)
