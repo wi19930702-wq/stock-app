@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import random
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime
+import pytz # 引入時區套件
 
 # --- 1. 頁面與 CSS 設定 ---
 st.set_page_config(page_title="全方位操盤手", layout="centered")
 
 st.markdown("""
 <style>
+    /* 卡片通用樣式 */
     .stock-card {
         background-color: #262730;
         padding: 15px;
@@ -34,12 +35,15 @@ st.markdown("""
         float: right;
     }
     
-    .calc-info {
+    /* 新增：K線數據顯示區，方便驗證 */
+    .ohlc-info {
         font-size: 11px;
         color: #888;
+        background-color: #333;
+        padding: 4px;
+        border-radius: 4px;
         margin-top: 5px;
-        border-top: 1px dotted #555;
-        padding-top: 5px;
+        text-align: center;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -64,7 +68,7 @@ SCAN_TARGETS = list(STOCK_MAP.keys())
 
 # --- 3. 核心函數 ---
 def calculate_cdp(high, low, close):
-    # 確保數值為浮點數
+    # 強制轉型，避免數據格式錯誤
     h, l, c = float(high), float(low), float(close)
     cdp = (h + l + c * 2) / 4
     ah = cdp + (h - l)
@@ -84,12 +88,13 @@ def generate_mock_broker_html():
 
 # --- 4. 側邊欄設定 ---
 st.sidebar.title("⚙️ 設定")
-data_mode = st.sidebar.radio(
-    "選擇模式：",
-    ("🌙 昨收 (預測今日)", "🔥 即時 (盤中衝刺)"),
+
+# 這次直接讓您選「資料來源」，不做太複雜的智慧判斷，避免誤判
+data_source = st.sidebar.radio(
+    "選擇計算基準：",
+    ("📅 昨收 (用來預測今日)", "⚡ 即時 (盤中即時運算)"),
     index=0 
 )
-is_look_back = "昨收" in data_mode
 
 # --- 5. 介面設計 ---
 tab1, tab2, tab3 = st.tabs(["🧮 計算機", "🚀 當沖掃描", "💰 營收創高"])
@@ -112,17 +117,17 @@ with tab1:
 
 # === 分頁 2: 當沖掃描 (修正版) ===
 with tab2:
-    st.markdown(f"### 🔍 熱門股掃描 - {data_mode}")
+    st.markdown(f"### 🔍 熱門股掃描")
     
     # 強制清除快取按鈕
-    if st.button("開始掃描 (強制更新數據)", use_container_width=True):
-        st.cache_data.clear() # 清除快取，確保資料最新
+    if st.button("開始掃描 (強制刷新)", use_container_width=True):
+        st.cache_data.clear() # 1. 強制清除 Streamlit 快取
         
         progress_bar = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
         
-        # 取得台灣時間
+        # 2. 取得正確的台灣時間
         tw_tz = pytz.timezone('Asia/Taipei')
         now_tw = datetime.now(tw_tz)
         today_str = now_tw.strftime('%Y-%m-%d')
@@ -143,23 +148,25 @@ with tab2:
                     except:
                         last_date_str = str(last_row.name)[:10]
                     
-                    # --- 關鍵修正邏輯 ---
-                    if is_look_back:
-                        # 如果是「看昨收」模式
+                    # --- 邏輯修正 ---
+                    target_row = None
+                    
+                    if "昨收" in data_source:
+                        # 模式 A: 昨收 (用來做今天的功課)
+                        # 如果最新資料的日期等於今天 (代表盤中資料已進來)，我們不能用，要退回上一筆
                         if last_date_str == today_str:
-                            # 如果最新資料是「今天」(代表盤中)，我們要退回「昨天」
                             if len(df) >= 2:
                                 target_row = df.iloc[-2]
                             else:
-                                continue
+                                continue # 資料不足
                         else:
-                            # 如果最新資料不是今天，那就是昨天(或上個交易日)的收盤
+                            # 如果最新資料不是今天 (是昨天收盤)，直接用
                             target_row = last_row
                     else:
-                        # 如果是「看即時」模式，直接用最新
+                        # 模式 B: 即時
                         target_row = last_row
                     
-                    # 最終確認使用的日期
+                    # 取得最終用於計算的日期
                     try:
                         calc_date = target_row.name.strftime('%Y-%m-%d')
                     except:
@@ -181,17 +188,15 @@ with tab2:
                     
                     name = STOCK_MAP.get(code, code)
                     
-                    # 計算 CDP (使用 target_row 的 H/L/C 算出的就是次日壓力)
+                    # 計算 CDP
                     ah, nh, nl, al, cdp = calculate_cdp(high, low, close)
                     bk_html = generate_mock_broker_html()
-                    
-                    # 預測日期說明
-                    forecast_note = "預測今日" if is_look_back else "即時運算"
                     
                     results.append({
                         "code":code, "name":name, "vol":int(vol/1000), 
                         "close":close, "pct":pct, "nh":nh, "nl":nl, 
-                        "bk":bk_html, "date":calc_date, "note": forecast_note
+                        "bk":bk_html, "date":calc_date,
+                        "high": high, "low": low # 儲存 H/L 以供顯示
                     })
                 except: continue
                 progress_bar.progress((i+1)/len(SCAN_TARGETS))
@@ -202,9 +207,12 @@ with tab2:
             if not results: 
                 st.warning(f"查無符合標的。")
             else:
-                st.success(f"掃描完成！計算基準日：{results[0]['date']}")
+                st.success(f"掃描完成！計算基準日：{results[0]['date']} (請核對下方 K 線數據)")
                 for s in results:
-                    html_code = f"""<div class="stock-card card-red"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa; font-size:12px;">{s['code']}</span></div><span class="date-badge">{s['date']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px;"><span style="color:#ff4b4b; font-weight:bold;">+{round(s['pct'], 2)}%</span><span style="font-size:13px; color:#ccc;">量: {s['vol']} 張 | 收: {s['close']}</span></div><div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid #444; padding-top:8px;"><span class="resistance">壓: {s['nh']}</span> <span class="support">撐: {s['nl']}</span></div><div class="calc-info">※ 使用 {s['date']} 收盤數據 {s['note']} 支撐壓力</div><div style="margin-top:8px; font-size:12px; color:#aaa;">⚡ 模擬主力: {s['bk']}</div></div>"""
+                    # 在卡片中顯示 OHLC 數據，證明是用哪一天的資料算的
+                    ohlc_text = f"計算依據 (K線): 高 {s['high']} | 低 {s['low']} | 收 {s['close']}"
+                    
+                    html_code = f"""<div class="stock-card card-red"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa; font-size:12px;">{s['code']}</span></div><span class="date-badge">{s['date']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px;"><span style="color:#ff4b4b; font-weight:bold;">+{round(s['pct'], 2)}%</span><span style="font-size:13px; color:#ccc;">量: {s['vol']} 張 | 收: {s['close']}</span></div><div class="ohlc-info">{ohlc_text}</div><div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid #444; padding-top:8px;"><span class="resistance">壓: {s['nh']}</span> <span class="support">撐: {s['nl']}</span></div><div style="margin-top:8px; font-size:12px; color:#aaa;">⚡ 模擬主力: {s['bk']}</div></div>"""
                     st.markdown(html_code, unsafe_allow_html=True)
         except: st.error("連線錯誤，請稍後再試")
 
