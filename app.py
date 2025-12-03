@@ -17,9 +17,9 @@ st.markdown("""
         margin-bottom: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    .card-green { border-left: 6px solid #00c853; } /* 計算機用 */
-    .card-red { border-left: 6px solid #ff4b4b; }   /* 飆股用 */
-    .card-gold { border-left: 6px solid #ffd700; }  /* 營收用 */
+    .card-green { border-left: 6px solid #00c853; } /* 計算機 */
+    .card-red { border-left: 6px solid #ff4b4b; }   /* 當沖 */
+    .card-gold { border-left: 6px solid #ffd700; }  /* 營收 */
     
     /* 字體與標籤 */
     .big-label { font-size: 14px; color: #aaaaaa; }
@@ -36,7 +36,6 @@ st.markdown("""
         margin-right: 5px;
         color: white;
     }
-    .tag-hot { background-color: #ff4b4b; }
     .tag-rev { background-color: #f57f17; }
     
     /* 日期標籤 */
@@ -63,7 +62,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 資料準備 ---
+# --- 2. 資料準備 (80+ 檔熱門股) ---
 STOCK_MAP = {
     "2330":"台積電", "2317":"鴻海", "2382":"廣達", "3231":"緯創", "2376":"技嘉", "6669":"緯穎", "2356":"英業達",
     "2454":"聯發科", "2303":"聯電", "3711":"日月光", "3443":"創意", "3661":"世芯", "3035":"智原",
@@ -97,12 +96,14 @@ def generate_mock_revenue():
     return rev, yoy, mom
 
 def generate_mock_broker_html():
+    # 模擬主力分點，特別標註凱基與富邦
     BROKER_POOLS = [("凱基-台北", "#d32f2f"), ("富邦-建國", "#1976d2"), ("美林", "#444"), ("摩根大通", "#444"), ("統一-嘉義", "#444"), ("永豐金-虎尾", "#444")]
     selected = random.sample(BROKER_POOLS, 3)
     html_parts = []
     for name, color in selected:
         vol = random.randint(500, 3000)
-        html_parts.append(f'<span style="background-color:{color}; padding:2px 6px; border-radius:4px; font-size:12px; margin-right:4px; color:white;">{name} +{vol}</span>')
+        # 使用 inline-block 確保不會跑版
+        html_parts.append(f'<span style="background-color:{color}; padding:2px 6px; border-radius:4px; font-size:12px; margin-right:4px; color:white; display:inline-block; margin-bottom:2px;">{name} +{vol}</span>')
     return "".join(html_parts)
 
 # --- 4. 側邊欄設定 (模式切換) ---
@@ -112,12 +113,10 @@ data_mode = st.sidebar.radio(
     ("🔥 今日即時 (盤中衝刺)", "🌙 昨日收盤 (盤前做功課)"),
     index=0
 )
-
-# 判斷是否為「看昨天」模式
 is_look_back = "昨日" in data_mode
 
 # --- 5. 介面設計 ---
-tab1, tab2, tab3 = st.tabs(["🧮 計算機", "🚀 當沖掃描", "💰 營收創高(模擬)"])
+tab1, tab2, tab3 = st.tabs(["🧮 計算機", "🚀 當沖掃描", "💰 營收創高"])
 
 # === 分頁 1: 經典計算機 ===
 with tab1:
@@ -132,6 +131,7 @@ with tab1:
     if st.button("計算", type="primary", use_container_width=True):
         if p_close > 0:
             ah, nh, nl, al, cdp = calculate_cdp(p_high, p_low, p_close)
+            # 這裡使用無縮排的 HTML 避免亂碼
             st.markdown(f"""<div class="stock-card card-green" style="text-align:center;">
 <div style="color:#aaa; margin-bottom:10px;">中關價 (CDP): {cdp}</div>
 <div style="display:flex; justify-content:space-between; border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:10px;">
@@ -153,7 +153,7 @@ with tab2:
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
         try:
-            # 抓取 5 天資料，確保有足夠的歷史數據可以回推
+            # 抓取 5 天資料，確保有足夠的歷史數據
             data = yf.download(tickers, period="5d", group_by='ticker', threads=True)
             
             for i, code in enumerate(SCAN_TARGETS):
@@ -161,21 +161,23 @@ with tab2:
                     df = data[f"{code}.TW"]
                     if df.empty: continue
                     
-                    # 決定要看哪一天的資料
+                    # 決定抓取哪一天的資料
                     if is_look_back:
-                        # 如果要看昨天，嘗試抓倒數第二筆 (iloc[-2])
-                        # 但如果剛好只有一筆資料 (例如週一剛開盤可能會有狀況)，就抓 -1
+                        # 嘗試抓倒數第二筆 (昨收)
                         if len(df) >= 2:
                             row = df.iloc[-2]
                         else:
                             row = df.iloc[-1]
                     else:
-                        # 看即時，抓最後一筆
+                        # 抓最後一筆 (即時)
                         row = df.iloc[-1]
                     
-                    # 取得該筆資料的日期
-                    data_date = row.name.strftime('%Y-%m-%d')
-                    
+                    # 格式化日期
+                    try:
+                        data_date = row.name.strftime('%Y-%m-%d')
+                    except:
+                        data_date = str(row.name)[:10]
+
                     if pd.isna(row['Volume']): continue
                     
                     vol = int(row['Volume'])
@@ -231,7 +233,7 @@ with tab2:
 # === 分頁 3: 營收創高 (模擬) ===
 with tab3:
     st.markdown("### 💰 月營收創新高 (模擬)")
-    st.info("篩選條件：本月營收創歷史新高、年增率 > 20%。")
+    st.caption("⚠️ 注意：營收數據為模擬展示 (Yahoo API 無法取得營收)")
     if st.button("掃描營收強勢股", use_container_width=True):
         targets = random.sample(SCAN_TARGETS, 10)
         for code in targets:
