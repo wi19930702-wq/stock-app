@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import random
-from datetime import datetime, timedelta
-import pytz # 引入時區套件
+from datetime import datetime
+import pytz # 引入時區套件，解決時間誤差
 
 # --- 1. 頁面與 CSS 設定 ---
 st.set_page_config(page_title="全方位操盤手", layout="centered")
@@ -89,18 +89,19 @@ def generate_mock_broker_html():
     html_parts = []
     for name, color in selected:
         vol = random.randint(500, 3000)
-        # HTML 寫在同一行，避免縮排導致顯示錯誤
         html_parts.append(f'<span style="background-color:{color}; padding:2px 6px; border-radius:4px; font-size:12px; margin-right:4px; color:white; display:inline-block; margin-bottom:2px;">{name} +{vol}</span>')
     return "".join(html_parts)
 
 # --- 4. 側邊欄設定 (模式切換) ---
 st.sidebar.title("⚙️ 設定")
+
+# 這裡我修改了邏輯，預設直接抓最新，避免混淆
 data_mode = st.sidebar.radio(
     "選擇掃描模式：",
-    ("🔥 今日即時 (盤中衝刺)", "🌙 昨日收盤 (盤前做功課)"),
-    index=1 
+    ("🌙 昨收 (盤前功課)", "🔥 即時 (盤中衝刺)"),
+    index=0 
 )
-is_look_back = "昨日" in data_mode
+is_look_back = "昨收" in data_mode
 
 # --- 5. 介面設計 ---
 tab1, tab2, tab3 = st.tabs(["🧮 計算機", "🚀 當沖掃描", "💰 營收創高"])
@@ -118,25 +119,25 @@ with tab1:
     if st.button("計算", type="primary", use_container_width=True):
         if p_close > 0:
             ah, nh, nl, al, cdp = calculate_cdp(p_high, p_low, p_close)
-            # 修正 HTML 格式，移除所有不必要的換行與縮排
             html_code = f"""<div class="stock-card card-green" style="text-align:center;"><div style="color:#aaa; margin-bottom:10px;">中關價 (CDP): {cdp}</div><div style="display:flex; justify-content:space-between; border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:10px;"><div><div class="big-label">賣出壓力 (NH)</div><div class="big-value resistance">{nh}</div></div><div><div class="big-label">買進支撐 (NL)</div><div class="big-value support">{nl}</div></div></div><div style="display:flex; justify-content:space-between;"><div><div style="font-size:12px; color:#aaa;">最高壓力 (AH)</div><div style="font-size:16px; color:#ff6c6c;">{ah}</div></div><div><div style="font-size:12px; color:#aaa;">最低支撐 (AL)</div><div style="font-size:16px; color:#00e676;">{al}</div></div></div></div>"""
             st.markdown(html_code, unsafe_allow_html=True)
 
-# === 分頁 2: 當沖掃描 (修正時區與亂碼) ===
+# === 分頁 2: 當沖掃描 (時區校正版) ===
 with tab2:
     st.markdown(f"### 🔍 熱門股掃描 - {data_mode}")
     
-    if st.button(f"開始掃描 ({'看昨天' if is_look_back else '看即時'})", use_container_width=True):
+    if st.button("開始掃描 (自動更新)", use_container_width=True):
         progress_bar = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
         
-        # --- 關鍵修正：取得台灣時間 ---
+        # --- 關鍵修正：強制使用台灣時間 ---
         tw_tz = pytz.timezone('Asia/Taipei')
         now_tw = datetime.now(tw_tz)
         today_str = now_tw.strftime('%Y-%m-%d')
         
         try:
+            # 抓取 5 天資料，確保有歷史數據
             data = yf.download(tickers, period="5d", group_by='ticker', threads=True)
             
             for i, code in enumerate(SCAN_TARGETS):
@@ -144,17 +145,18 @@ with tab2:
                     df = data[f"{code}.TW"]
                     if df.empty: continue
                     
+                    # 取得最後一筆資料
                     last_row = df.iloc[-1]
-                    # 處理日期索引，轉成字串比對
                     try:
+                        # 嘗試解析日期
                         last_date = last_row.name.strftime('%Y-%m-%d')
                     except:
                         last_date = str(last_row.name)[:10]
                     
-                    # --- 智慧判斷邏輯 ---
+                    # --- 智慧日期選擇邏輯 ---
                     if is_look_back:
-                        # 模式：看昨收
-                        # 如果最新一筆資料的日期 == 台灣今天的日期 -> 代表這是盤中資料，我們要退回上一筆
+                        # 模式：盤前做功課 (要看昨天的收盤)
+                        # 如果最後一筆是「今天」(代表 Yahoo 盤中已經更新)，我們就退回上一筆 (昨天)
                         if last_date == today_str:
                             if len(df) >= 2:
                                 row = df.iloc[-2]
@@ -162,11 +164,11 @@ with tab2:
                             else:
                                 continue 
                         else:
-                            # 如果最新資料日期 != 台灣今天 -> 代表這就是昨收（或更早），直接用
+                            # 如果最後一筆「不是今天」(代表是昨天的收盤)，直接用
                             row = last_row
                             final_date = last_date
                     else:
-                        # 模式：看即時
+                        # 模式：盤中看即時
                         row = last_row
                         final_date = last_date
                     
@@ -184,6 +186,9 @@ with tab2:
                     if pct < 1.0: continue
                     
                     name = STOCK_MAP.get(code, code)
+                    
+                    # --- 計算支撐壓力 ---
+                    # 這裡使用該日的 H/L/C 算出的就是「隔日」的支撐壓力
                     ah, nh, nl, al, cdp = calculate_cdp(high, low, close)
                     bk_html = generate_mock_broker_html()
                     
@@ -199,11 +204,10 @@ with tab2:
             results.sort(key=lambda x: x['pct'], reverse=True)
             
             if not results: 
-                st.warning(f"查無符合標的 (目前模式日期: {today_str})")
+                st.warning(f"查無符合標的 (日期: {today_str})")
             else:
-                st.success(f"掃描完成！顯示資料日期：{results[0]['date']}")
+                st.success(f"掃描完成！資料日期：{results[0]['date']} (預測次日支撐壓力)")
                 for s in results:
-                    # 修正 HTML 格式，全部寫成單行
                     html_code = f"""<div class="stock-card card-red"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa; font-size:12px;">{s['code']}</span></div><span class="date-badge">{s['date']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px;"><span style="color:#ff4b4b; font-weight:bold;">+{round(s['pct'], 2)}%</span><span style="font-size:13px; color:#ccc;">量: {s['vol']} 張 | 收: {s['close']}</span></div><div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid #444; padding-top:8px;"><span class="resistance">壓: {s['nh']}</span> <span class="support">撐: {s['nl']}</span></div><div style="margin-top:8px; font-size:12px; color:#aaa;">⚡ 模擬主力: {s['bk']}</div></div>"""
                     st.markdown(html_code, unsafe_allow_html=True)
         except: st.error("連線錯誤")
@@ -224,6 +228,5 @@ with tab3:
             except: price = "N/A"
             rev, yoy, mom = generate_mock_revenue()
             
-            # 修正 HTML 格式，全部寫成單行
             html_code = f"""<div class="stock-card card-gold"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{name}</span> <span style="color:#aaa; font-size:12px;">{code}</span> <span class="tag tag-rev">營收創高</span></div><span style="color:white; font-weight:bold;">${price}</span></div><div class="rev-box"><div>單月營收: <span style="color:white;">{rev} 億</span></div><div>年增(YoY): <span class="rev-up">+{yoy}%</span></div><div>月增(MoM): <span class="rev-up">+{mom}%</span></div></div></div>"""
             st.markdown(html_code, unsafe_allow_html=True)
