@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import random
-from datetime import datetime
+from datetime import datetime, date
 
 # --- 1. 頁面與 CSS 設定 ---
 st.set_page_config(page_title="全方位操盤手", layout="centered")
@@ -96,13 +96,11 @@ def generate_mock_revenue():
     return rev, yoy, mom
 
 def generate_mock_broker_html():
-    # 模擬主力分點，特別標註凱基與富邦
     BROKER_POOLS = [("凱基-台北", "#d32f2f"), ("富邦-建國", "#1976d2"), ("美林", "#444"), ("摩根大通", "#444"), ("統一-嘉義", "#444"), ("永豐金-虎尾", "#444")]
     selected = random.sample(BROKER_POOLS, 3)
     html_parts = []
     for name, color in selected:
         vol = random.randint(500, 3000)
-        # 使用 inline-block 確保不會跑版
         html_parts.append(f'<span style="background-color:{color}; padding:2px 6px; border-radius:4px; font-size:12px; margin-right:4px; color:white; display:inline-block; margin-bottom:2px;">{name} +{vol}</span>')
     return "".join(html_parts)
 
@@ -111,7 +109,7 @@ st.sidebar.title("⚙️ 設定")
 data_mode = st.sidebar.radio(
     "選擇掃描模式：",
     ("🔥 今日即時 (盤中衝刺)", "🌙 昨日收盤 (盤前做功課)"),
-    index=0
+    index=1  # 預設改成昨日收盤，方便您早上看
 )
 is_look_back = "昨日" in data_mode
 
@@ -131,7 +129,6 @@ with tab1:
     if st.button("計算", type="primary", use_container_width=True):
         if p_close > 0:
             ah, nh, nl, al, cdp = calculate_cdp(p_high, p_low, p_close)
-            # 這裡使用無縮排的 HTML 避免亂碼
             st.markdown(f"""<div class="stock-card card-green" style="text-align:center;">
 <div style="color:#aaa; margin-bottom:10px;">中關價 (CDP): {cdp}</div>
 <div style="display:flex; justify-content:space-between; border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:10px;">
@@ -144,7 +141,7 @@ with tab1:
 </div>
 </div>""", unsafe_allow_html=True)
 
-# === 分頁 2: 當沖掃描 (支援切換日期) ===
+# === 分頁 2: 當沖掃描 (修正日期抓取邏輯) ===
 with tab2:
     st.markdown(f"### 🔍 熱門股掃描 - {data_mode}")
     
@@ -152,8 +149,12 @@ with tab2:
         progress_bar = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
+        
+        # 取得今天日期字串
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        
         try:
-            # 抓取 5 天資料，確保有足夠的歷史數據
+            # 抓取 5 天資料，確保有歷史數據
             data = yf.download(tickers, period="5d", group_by='ticker', threads=True)
             
             for i, code in enumerate(SCAN_TARGETS):
@@ -161,22 +162,29 @@ with tab2:
                     df = data[f"{code}.TW"]
                     if df.empty: continue
                     
-                    # 決定抓取哪一天的資料
-                    if is_look_back:
-                        # 嘗試抓倒數第二筆 (昨收)
-                        if len(df) >= 2:
-                            row = df.iloc[-2]
-                        else:
-                            row = df.iloc[-1]
-                    else:
-                        # 抓最後一筆 (即時)
-                        row = df.iloc[-1]
+                    # --- 關鍵修正：智慧日期判斷 ---
+                    # 取得最後一筆資料
+                    last_row = df.iloc[-1]
+                    last_date = str(last_row.name)[:10]
                     
-                    # 格式化日期
-                    try:
-                        data_date = row.name.strftime('%Y-%m-%d')
-                    except:
-                        data_date = str(row.name)[:10]
+                    if is_look_back:
+                        # 模式：看昨天收盤
+                        
+                        # 如果最後一筆是「今天」，那就代表 Yahoo 已經更新到開盤了，我們要退回上一筆
+                        if last_date == today_str:
+                            if len(df) >= 2:
+                                row = df.iloc[-2] # 抓倒數第二筆 (昨天)
+                            else:
+                                continue # 資料不足，跳過
+                        else:
+                            # 如果最後一筆不是今天 (例如昨天晚上 Yahoo 更新了昨收)，那就直接用最後一筆
+                            row = last_row
+                    else:
+                        # 模式：看即時
+                        row = last_row
+                    
+                    # 再次確認抓到的日期
+                    data_date = str(row.name)[:10]
 
                     if pd.isna(row['Volume']): continue
                     
