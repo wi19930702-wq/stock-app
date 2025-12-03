@@ -136,7 +136,6 @@ with tab1:
                     df = data[f"{code}.TW"]
                     if df.empty: continue
                     
-                    # 確保抓到非空值的最後一筆
                     valid_rows = df.dropna(subset=['Close', 'Volume'])
                     if valid_rows.empty: continue
                     
@@ -192,6 +191,7 @@ with tab1:
                     if s['is_target']:
                         short_tip = f"<div class='short-signal'>💣 潛在賣壓：明日若跌破 {s['close']} 可試空</div>"
                     
+                    # 修正：單行 HTML 避免亂碼
                     html_code = f"""<div class="stock-card {card_class}"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa; font-size:12px;">{s['code']}</span></div><span style="color:#aaa; font-size:12px;">資料: {s['date']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px;"><span style="color:{pct_color}; font-weight:bold;">{pct_sign}{round(s['pct'], 2)}%</span><span style="font-size:13px; color:#ccc;">量: {s['vol']} 張 | 收: {s['close']}</span></div>{short_tip}<div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid #444; padding-top:8px;"><span class="resistance">壓(NH): {s['nh']}</span> <span class="support">撐(NL): {s['nl']}</span></div><div style="margin-top:8px; font-size:12px; color:#aaa;">⚡ 模擬主力: {s['bk']}</div></div>"""
                     st.markdown(html_code, unsafe_allow_html=True)
         except: st.error("連線錯誤")
@@ -226,15 +226,17 @@ with tab2:
                         results.append({"code":code, "name":name, "now":now_price, "open":open_price, "drop":drop})
             except: pass
             progress_bar.progress((idx + 1) / len(chunks))
-            time.sleep(0.5)
+            time.sleep(0.5) # 避免太快被擋
             
         progress_bar.empty()
         results.sort(key=lambda x: x['drop'], reverse=True)
         
-        if not results: st.success("目前無轉弱訊號。")
+        if not results: st.success("目前無轉弱訊號 (多方強勢)。")
         else:
             for s in results:
-                st.markdown(f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><span class="bearish-alert">跌破開盤</span></div><div style="display:flex; justify-content:space-between; margin-top:5px;"><span>開盤: {s['open']}</span> <span style="color:#00e676; font-size:20px; font-weight:bold;">{s['now']}</span></div></div>""", unsafe_allow_html=True)
+                # 修正：單行 HTML
+                html_code = f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><span class="bearish-alert">跌破開盤</span></div><div style="display:flex; justify-content:space-between; margin-top:5px;"><span>開盤: {s['open']}</span> <span style="color:#00e676; font-size:20px; font-weight:bold;">{s['now']}</span></div></div>"""
+                st.markdown(html_code, unsafe_allow_html=True)
 
 # === 分頁 3: 誘多雷達 (假突破) ===
 with tab3:
@@ -283,6 +285,7 @@ with tab3:
             if not trap_results: st.success("無假突破訊號。")
             else:
                 for s in trap_results:
+                    # 修正：單行 HTML
                     html_code = f"""<div class="stock-card card-trap"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><span class="trap-alert">假突破</span></div><div style="display:flex; justify-content:space-between; margin-top:5px;"><span>壓力: {s['nh']}</span> <span style="color:#00e676; font-size:20px; font-weight:bold;">{s['now']}</span></div></div>"""
                     st.markdown(html_code, unsafe_allow_html=True)
         except: st.error("連線錯誤")
