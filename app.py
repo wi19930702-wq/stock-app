@@ -20,8 +20,8 @@ st.markdown("""
         margin-bottom: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    .card-red { border-left: 6px solid #ff4b4b; }   /* 漲 */
-    .card-green { border-left: 6px solid #00c853; } /* 跌 */
+    .card-red { border-left: 6px solid #ff4b4b; }   /* 漲/隔日沖 */
+    .card-green { border-left: 6px solid #00c853; } /* 跌/計算機 */
     .card-trap { border-left: 6px solid #d500f9; }  /* 假突破 */
     
     .big-value { font-size: 24px; font-weight: bold; color: #ffffff; }
@@ -59,10 +59,15 @@ st.markdown("""
         font-weight: bold;
         float: right;
     }
+    
+    /* 計算機專用大字體 */
+    .calc-label { font-size: 14px; color: #aaaaaa; }
+    .calc-val-res { font-size: 26px; font-weight: bold; color: #ff6c6c; }
+    .calc-val-sup { font-size: 26px; font-weight: bold; color: #00e676; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 資料準備 (80+ 檔熱門股) ---
+# --- 2. 資料準備 ---
 STOCK_MAP = {
     "2330":"台積電", "2317":"鴻海", "2382":"廣達", "3231":"緯創", "2376":"技嘉", "6669":"緯穎", "2356":"英業達",
     "2454":"聯發科", "2303":"聯電", "3711":"日月光", "3443":"創意", "3661":"世芯", "3035":"智原",
@@ -118,13 +123,12 @@ with tab1:
     st.info("策略：找出「今日爆量大漲」的股票 👉 明日開盤若開高走低，就是做空機會！")
     
     if st.button("掃描熱門股 (強制刷新)", use_container_width=True):
-        st.cache_data.clear() # 強制清除快取
+        st.cache_data.clear()
         progress_bar = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
         
         try:
-            # 抓取 5 天資料，增加容錯率
             data = yf.download(tickers, period="5d", group_by='ticker', threads=True)
             
             for i, code in enumerate(SCAN_TARGETS):
@@ -132,7 +136,7 @@ with tab1:
                     df = data[f"{code}.TW"]
                     if df.empty: continue
                     
-                    # --- 關鍵修正：確保抓到非空值的最後一筆 ---
+                    # 確保抓到非空值的最後一筆
                     valid_rows = df.dropna(subset=['Close', 'Volume'])
                     if valid_rows.empty: continue
                     
@@ -144,10 +148,8 @@ with tab1:
                     high = float(last_row['High'])
                     low = float(last_row['Low'])
                     
-                    # 篩選條件放寬：只要有量就顯示 (方便您做空)
-                    if vol < 500000: continue # 至少 500 張
+                    if vol < 500000: continue 
                     
-                    # 計算漲跌幅
                     if op > 0:
                         pct = ((close - op) / op) * 100
                     else:
@@ -162,9 +164,8 @@ with tab1:
                     except:
                         d_str = str(last_row.name)[5:10]
                     
-                    # 判斷是否為「隔日沖潛在賣壓」
                     is_target = False
-                    if pct > 2.0: # 漲幅 > 2% 視為強勢，可能被隔日沖鎖定
+                    if pct > 2.0:
                         is_target = True
                     
                     results.append({
@@ -176,11 +177,10 @@ with tab1:
                 progress_bar.progress((i+1)/len(SCAN_TARGETS))
             
             progress_bar.empty()
-            # 排序：漲幅大的排前面
             results.sort(key=lambda x: x['pct'], reverse=True)
             
             if not results: 
-                st.warning("目前無資料 (Yahoo API 連線異常，請稍後再試)。")
+                st.warning("目前無資料。")
             else:
                 st.success(f"掃描完成！顯示 {len(results)} 檔熱門股。")
                 for s in results:
@@ -223,18 +223,15 @@ with tab2:
                     if now_price < open_price:
                         name = STOCK_MAP.get(code, code)
                         drop = ((open_price - now_price) / open_price) * 100
-                        
-                        # 簡單估算支撐 (昨收當參考)
-                        # Twstock 沒給昨收，這裡僅顯示跌幅
                         results.append({"code":code, "name":name, "now":now_price, "open":open_price, "drop":drop})
             except: pass
             progress_bar.progress((idx + 1) / len(chunks))
-            time.sleep(0.5) # 避免太快被擋
+            time.sleep(0.5)
             
         progress_bar.empty()
         results.sort(key=lambda x: x['drop'], reverse=True)
         
-        if not results: st.success("目前無轉弱訊號 (多方強勢)。")
+        if not results: st.success("目前無轉弱訊號。")
         else:
             for s in results:
                 st.markdown(f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><span class="bearish-alert">跌破開盤</span></div><div style="display:flex; justify-content:space-between; margin-top:5px;"><span>開盤: {s['open']}</span> <span style="color:#00e676; font-size:20px; font-weight:bold;">{s['now']}</span></div></div>""", unsafe_allow_html=True)
@@ -250,7 +247,6 @@ with tab3:
         try:
             tickers = [f"{c}.TW" for c in SCAN_TARGETS]
             hist_data = yf.download(tickers, period="5d", group_by='ticker', progress=False)
-            
             chunk_size = 20
             chunks = [SCAN_TARGETS[i:i + chunk_size] for i in range(0, len(SCAN_TARGETS), chunk_size)]
             
@@ -262,13 +258,8 @@ with tab3:
                         valid_rows = df.dropna(subset=['Close'])
                         if valid_rows.empty: continue
                         
-                        # 抓倒數第二筆 (昨收) 來算今天的壓力
-                        # 如果今天是交易日且 Yahoo 已更新盤中，那就要退回上一筆
-                        # 這裡簡單抓倒數第二筆作為昨日參考
-                        if len(valid_rows) >= 2:
-                            ref_row = valid_rows.iloc[-2]
-                        else:
-                            ref_row = valid_rows.iloc[-1]
+                        if len(valid_rows) >= 2: ref_row = valid_rows.iloc[-2]
+                        else: ref_row = valid_rows.iloc[-1]
                             
                         nh = calculate_cdp(ref_row['High'], ref_row['Low'], ref_row['Close'])[1]
                         
@@ -281,20 +272,14 @@ with tab3:
                         vol = float(real['accumulate_trade_volume'])
                         
                         if vol < 500: continue
-
-                        # 假突破邏輯：曾衝過 NH 但現在跌破 NH
                         if day_high > nh and now_price < nh:
                             name = STOCK_MAP.get(code, code)
-                            trap_results.append({
-                                "code":code, "name":name, "now":now_price, 
-                                "high":day_high, "nh":nh
-                            })
+                            trap_results.append({"code":code, "name":name, "now":now_price, "high":day_high, "nh":nh})
                     except: continue
                 progress_bar.progress((idx + 1) / len(chunks))
                 time.sleep(0.5)
             
             progress_bar.empty()
-            
             if not trap_results: st.success("無假突破訊號。")
             else:
                 for s in trap_results:
@@ -302,15 +287,47 @@ with tab3:
                     st.markdown(html_code, unsafe_allow_html=True)
         except: st.error("連線錯誤")
 
-# === 分頁 4: 計算機 ===
+# === 分頁 4: 計算機 (完全復原經典版) ===
 with tab4:
-    st.markdown("### ⚡ 計算機")
+    st.markdown("### ⚡ 支撐壓力計算機")
+    st.info("輸入 K 線，立即計算關鍵點位。")
+    
     c1, c2 = st.columns(2)
     with c1:
-        p_close = st.number_input("收盤", 0.0, step=0.5)
-        p_high = st.number_input("最高", 0.0, step=0.5)
+        p_close = st.number_input("收盤價", 0.0, step=0.1, format="%.2f")
+        p_high = st.number_input("最高價", 0.0, step=0.1, format="%.2f")
     with c2:
-        p_low = st.number_input("最低", 0.0, step=0.5)
-    if st.button("計算"):
-        ah, nh, nl, al, cdp = calculate_cdp(p_high, p_low, p_close)
-        st.success(f"賣壓(NH): {nh} | 支撐(NL): {nl}")
+        p_low = st.number_input("最低價", 0.0, step=0.1, format="%.2f")
+        
+    if st.button("計算", type="primary", use_container_width=True):
+        if p_close > 0:
+            ah, nh, nl, al, cdp = calculate_cdp(p_high, p_low, p_close)
+            
+            # 使用您最喜歡的經典綠色卡片 HTML
+            st.markdown(f"""
+            <div class="stock-card card-green" style="text-align:center;">
+                <div style="color:#aaa; font-size:14px; margin-bottom:10px;">中關價 (CDP): {cdp}</div>
+                
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid #444; padding-bottom:15px; margin-bottom:15px;">
+                    <div style="width:50%; border-right:1px solid #444;">
+                        <div class="calc-label">賣出壓力 (NH)</div>
+                        <div class="calc-val-res">{nh}</div>
+                    </div>
+                    <div style="width:50%;">
+                        <div class="calc-label">買進支撐 (NL)</div>
+                        <div class="calc-val-sup">{nl}</div>
+                    </div>
+                </div>
+                
+                <div style="display:flex; justify-content:space-between;">
+                    <div style="width:50%;">
+                        <div style="font-size:12px; color:#aaa;">最高壓力 (AH)</div>
+                        <div style="font-size:16px; color:#ff6c6c; font-weight:bold;">{ah}</div>
+                    </div>
+                    <div style="width:50%;">
+                        <div style="font-size:12px; color:#aaa;">最低支撐 (AL)</div>
+                        <div style="font-size:16px; color:#00e676; font-weight:bold;">{al}</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
