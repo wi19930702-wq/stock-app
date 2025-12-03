@@ -32,6 +32,8 @@ st.markdown("""
     /* 大字體優化 */
     .big-label { font-size: 16px; color: #aaaaaa; margin-bottom: 5px; }
     .big-value { font-size: 28px; font-weight: bold; color: #ffffff; }
+    .small-label { font-size: 12px; color: #888; }
+    .small-value { font-size: 18px; font-weight: bold; }
     
     .resistance { color: #ff6c6c; font-weight: bold; } /* 壓力紅 */
     .support { color: #00e676; font-weight: bold; } /* 支撐綠 */
@@ -61,7 +63,7 @@ def calculate_cdp(high, low, close):
     al = cdp - (high - low)
     return round(ah, 2), round(nh, 2), round(nl, 2), round(al, 2), round(cdp, 2)
 
-# --- 3. 掃描用資料 (保留給分頁2使用) ---
+# --- 3. 掃描用資料 ---
 STOCK_MAP = {
     "4939":"亞電", "8046":"南電", "6269":"台郡", "6274":"台燿", "6213":"智擎",
     "3037":"欣興", "2313":"華通", "2367":"燿華", "2368":"金像電", "8039":"台虹",
@@ -73,7 +75,7 @@ STOCK_MAP = {
 SCAN_TARGETS = list(STOCK_MAP.keys())
 
 def generate_mock_broker_html():
-    # 模擬顯示隔日沖券商
+    # 模擬顯示隔日沖券商 (修正縮排問題)
     BROKER_POOLS = [("凱基-台北", "kgi-tag"), ("富邦-建國", "fubon-tag"), ("美林", "broker-tag"), ("摩根大通", "broker-tag"), ("統一-嘉義", "broker-tag"), ("永豐金-虎尾", "broker-tag")]
     selected = random.sample(BROKER_POOLS, 3)
     html_parts = []
@@ -84,7 +86,6 @@ def generate_mock_broker_html():
 
 # --- 4. 介面設計 ---
 
-# 分頁設定：計算機放第一個 (Tab 1)
 tab1, tab2 = st.tabs(["🧮 快速計算機", "🚀 飆股掃描"])
 
 # === 分頁 1: 經典計算機 (還原最初版本) ===
@@ -99,43 +100,39 @@ with tab1:
     with col2:
         p_low = st.number_input("最低價", value=0.0, step=0.1, format="%.2f")
         
-    # 大按鈕
     if st.button("開始計算", type="primary", use_container_width=True):
         if p_close > 0:
             ah, nh, nl, al, cdp = calculate_cdp(p_high, p_low, p_close)
             
-            # 經典綠色卡片設計
-            st.markdown(f"""
-            <div class="calc-card">
-                <div style="font-size:14px; color:#aaa; margin-bottom:10px;">中關價 (CDP): {cdp}</div>
-                
-                <div style="display:flex; justify-content:space-between; margin-bottom:15px; border-bottom:1px solid #444; padding-bottom:15px;">
-                    <div style="width:50%;">
-                        <div class="big-label">賣出壓力 (NH)</div>
-                        <div class="big-value resistance">{nh}</div>
-                    </div>
-                    <div style="width:50%; border-left:1px solid #444;">
-                        <div class="big-label">買進支撐 (NL)</div>
-                        <div class="big-value support">{nl}</div>
-                    </div>
-                </div>
-                
-                <div style="display:flex; justify-content:space-between;">
-                    <div style="width:50%;">
-                        <div style="font-size:12px; color:#888;">最高壓力 (AH)</div>
-                        <div style="font-size:18px; color:#ff6c6c;">{ah}</div>
-                    </div>
-                    <div style="width:50%;">
-                        <div style="font-size:12px; color:#888;">最低支撐 (AL)</div>
-                        <div style="font-size:18px; color:#00e676;">{al}</div>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            # 使用無縮排的 HTML 字串，解決顯示亂碼問題
+            html_result = f"""<div class="calc-card">
+<div style="font-size:14px; color:#aaa; margin-bottom:10px;">中關價 (CDP): {cdp}</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:15px; border-bottom:1px solid #444; padding-bottom:15px;">
+<div style="width:50%;">
+<div class="big-label">賣出壓力 (NH)</div>
+<div class="big-value resistance">{nh}</div>
+</div>
+<div style="width:50%; border-left:1px solid #444;">
+<div class="big-label">買進支撐 (NL)</div>
+<div class="big-value support">{nl}</div>
+</div>
+</div>
+<div style="display:flex; justify-content:space-between;">
+<div style="width:50%;">
+<div class="small-label">最高壓力 (AH)</div>
+<div class="small-value resistance">{ah}</div>
+</div>
+<div style="width:50%;">
+<div class="small-label">最低支撐 (AL)</div>
+<div class="small-value support">{al}</div>
+</div>
+</div>
+</div>"""
+            st.markdown(html_result, unsafe_allow_html=True)
         else:
             st.warning("請輸入大於 0 的價格")
 
-# === 分頁 2: 飆股掃描 (保留原本的模擬券商功能) ===
+# === 分頁 2: 飆股掃描 (修復顯示問題) ===
 with tab2:
     st.markdown("### 🔍 市場熱門股掃描")
     if st.button("掃描全市場 (含主力分點)", use_container_width=True):
@@ -179,20 +176,21 @@ with tab2:
                 st.warning("無符合標的。")
             else:
                 for s in valid_stocks:
+                    # 這裡也是使用無縮排的 HTML，解決跑版問題
                     html = f"""<div class="stock-card">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="font-size:13px; color:#ccc;">{s['code']}</span></div>
-        <span style="color:#ff4b4b; font-weight:bold;">+{round(s['change'], 2)}%</span>
-    </div>
-    <div style="margin-top:5px; color:#ccc; font-size:13px;">量: {s['vol']} 張 | 收: {s['close']}</div>
-    <div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid #444; padding-top:8px;">
-        <span class="resistance">壓: {s['nh']}</span>
-        <span class="support">撐: {s['nl']}</span>
-    </div>
-    <div style="margin-top:8px; padding-top:5px; border-top:1px dashed #555;">
-        <div style="font-size:12px; color:#aaa; margin-bottom:3px;">⚡ 模擬主力:</div>
-        {s['brokers_html']}
-    </div>
+<div style="display:flex; justify-content:space-between; align-items:center;">
+<div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="font-size:13px; color:#ccc;">{s['code']}</span></div>
+<span style="color:#ff4b4b; font-weight:bold;">+{round(s['change'], 2)}%</span>
+</div>
+<div style="margin-top:5px; color:#ccc; font-size:13px;">量: {s['vol']} 張 | 收: {s['close']}</div>
+<div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid #444; padding-top:8px;">
+<span class="resistance">壓: {s['nh']}</span>
+<span class="support">撐: {s['nl']}</span>
+</div>
+<div style="margin-top:8px; padding-top:5px; border-top:1px dashed #555;">
+<div style="font-size:12px; color:#aaa; margin-bottom:3px;">⚡ 模擬主力:</div>
+{s['brokers_html']}
+</div>
 </div>"""
                     st.markdown(html, unsafe_allow_html=True)
         except Exception as e: st.error(f"錯誤: {e}")
