@@ -19,6 +19,17 @@ st.markdown("""
     .support { color: #00e676; font-weight: bold; }
     .date-badge { background-color: #444; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px; float: right; }
     .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 5px; color: white; background-color: #555; }
+    
+    /* 更新時間標籤 */
+    .update-time {
+        text-align: center;
+        background-color: #d32f2f;
+        color: white;
+        padding: 5px;
+        border-radius: 5px;
+        font-weight: bold;
+        margin-bottom: 15px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -53,15 +64,21 @@ def calculate_cdp(high, low, close):
 # --- 4. 介面設計 ---
 st.title("⚡ 極速當沖戰情室")
 tz = pytz.timezone('Asia/Taipei')
-st.caption(f"台灣時間: {datetime.now(tz).strftime('%H:%M:%S')}")
+current_time = datetime.now(tz).strftime('%H:%M:%S')
+st.caption(f"台灣時間: {current_time}")
 
 tab1, tab2, tab3, tab4 = st.tabs(["📉 盤中轉弱", "💣 誘多假突破", "🔥 隔日沖雷達", "🧮 計算機"])
 
 # === 分頁 1: 盤中轉弱 ===
 with tab1:
     st.markdown("### 📉 盤中轉弱雷達")
-    if st.button("掃描轉弱股", key="btn1", use_container_width=True):
-        st.cache_data.clear()
+    # 更新時間顯示
+    if 'last_update_1' not in st.session_state:
+        st.session_state.last_update_1 = "尚未掃描"
+    
+    if st.button("掃描轉弱股 (跌幅大優先)", key="btn1", use_container_width=True):
+        st.cache_data.clear() # 強制清除快取
+        st.session_state.last_update_1 = datetime.now(tz).strftime('%H:%M:%S')
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
@@ -71,31 +88,39 @@ with tab1:
                 try:
                     df = data[f"{code}.TW"]
                     if df.empty: continue
-                    # 抓最新一筆 (即時)
                     row = df.iloc[-1]
                     if pd.isna(row['Open']): continue
                     
                     now_p = float(row['Close'])
                     open_p = float(row['Open'])
+                    vol = int(row['Volume'])
                     
+                    if vol < 500000: continue # 過濾無量股
+                    
+                    # 邏輯：現價 < 開盤 (轉弱)
                     if now_p < open_p:
                         name = STOCK_MAP.get(code, code)
                         drop = ((open_p - now_p) / open_p) * 100
-                        results.append({"code":code, "name":name, "now":now_p, "open":open_p, "drop":drop})
+                        results.append({"code":code, "name":name, "now":now_p, "open":open_p, "drop":drop, "vol":vol})
                 except: continue
                 progress.progress((i+1)/len(SCAN_TARGETS))
             progress.empty()
+            
+            # 排序：跌幅最大的排最上面 (您要求的更新股要在上面)
             results.sort(key=lambda x: x['drop'], reverse=True)
+            
+            st.markdown(f"<div class='update-time'>最後更新: {st.session_state.last_update_1}</div>", unsafe_allow_html=True)
+            
             if not results: st.info("目前無轉弱股")
             else:
                 for s in results:
-                    st.markdown(f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><span class="tag" style="background-color:#1b5e20;">跌破開盤 {round(s['drop'], 2)}%</span></div><div style="display:flex; justify-content:space-between; margin-top:10px;"><div><div style="font-size:11px; color:#aaa;">開盤價</div><div style="color:white; font-weight:bold;">{s['open']}</div></div><div><div style="font-size:11px; color:#aaa;">目前價</div><div style="color:#00e676; font-weight:bold; font-size:22px;">{s['now']}</div></div></div></div>""", unsafe_allow_html=True)
-        except: st.error("連線忙碌中")
+                    st.markdown(f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><span class="tag" style="background-color:#1b5e20;">跌破開盤 {round(s['drop'], 2)}%</span></div><div style="display:flex; justify-content:space-between; margin-top:10px;"><div><div style="font-size:11px; color:#aaa;">開盤價</div><div style="color:white; font-weight:bold;">{s['open']}</div></div><div><div style="font-size:11px; color:#aaa;">目前價</div><div style="color:#00e676; font-weight:bold; font-size:22px;">{s['now']}</div></div></div><div style="font-size:11px; color:#aaa; margin-top:5px;">成交量: {int(s['vol']/1000)} 張</div></div>""", unsafe_allow_html=True)
+        except: st.error("連線忙碌中，請重試")
 
 # === 分頁 2: 誘多假突破 ===
 with tab2:
     st.markdown("### 💣 盤中誘多偵測")
-    if st.button("掃描假突破", key="btn2", use_container_width=True):
+    if st.button("掃描假突破 (回落大優先)", key="btn2", use_container_width=True):
         st.cache_data.clear()
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
@@ -108,22 +133,26 @@ with tab2:
                     valid_rows = df.dropna(subset=['Close'])
                     if len(valid_rows) < 2: continue
                     
-                    # 昨收算壓力
                     prev_row = valid_rows.iloc[-2]
                     nh = calculate_cdp(prev_row['High'], prev_row['Low'], prev_row['Close'])[1]
                     
-                    # 今日即時
                     curr_row = valid_rows.iloc[-1]
                     now_p = float(curr_row['Close'])
                     high_p = float(curr_row['High'])
                     
-                    # 假突破條件：曾過NH但現在破NH
                     if high_p > nh and now_p < nh:
                         name = STOCK_MAP.get(code, code)
-                        results.append({"code":code, "name":name, "now":now_p, "high":high_p, "nh":nh})
+                        diff = high_p - now_p
+                        results.append({"code":code, "name":name, "now":now_p, "high":high_p, "nh":nh, "diff":diff})
                 except: continue
                 progress.progress((i+1)/len(SCAN_TARGETS))
             progress.empty()
+            
+            # 排序：回落幅度(diff)最大的排最上面
+            results.sort(key=lambda x: x['diff'], reverse=True)
+            
+            st.markdown(f"<div class='update-time'>更新完成</div>", unsafe_allow_html=True)
+            
             if not results: st.info("無假突破訊號")
             else:
                 for s in results:
@@ -132,8 +161,8 @@ with tab2:
 
 # === 分頁 3: 隔日沖雷達 ===
 with tab3:
-    st.markdown("### 🔥 隔日沖雷達 (做空觀察)")
-    if st.button("掃描熱門股", key="btn3", use_container_width=True):
+    st.markdown("### 🔥 隔日沖雷達")
+    if st.button("掃描強勢股 (漲幅大優先)", key="btn3", use_container_width=True):
         st.cache_data.clear()
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
@@ -162,7 +191,12 @@ with tab3:
                 except: continue
                 progress.progress((i+1)/len(SCAN_TARGETS))
             progress.empty()
+            
+            # 排序：漲幅最大的排最上面
             results.sort(key=lambda x: x['pct'], reverse=True)
+            
+            st.markdown(f"<div class='update-time'>資料日期: {results[0]['date'] if results else 'N/A'}</div>", unsafe_allow_html=True)
+            
             if not results: st.warning("無資料")
             else:
                 for s in results:
