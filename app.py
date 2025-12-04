@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 import pytz
+import time
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="全方位操盤手", layout="centered")
@@ -25,10 +26,17 @@ st.markdown("""
         text-align: center;
         background-color: #d32f2f;
         color: white;
-        padding: 5px;
+        padding: 8px;
         border-radius: 5px;
         font-weight: bold;
         margin-bottom: 15px;
+        font-size: 14px;
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.8; }
+        100% { opacity: 1; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -65,29 +73,38 @@ def calculate_cdp(high, low, close):
 st.title("⚡ 極速當沖戰情室")
 tz = pytz.timezone('Asia/Taipei')
 current_time = datetime.now(tz).strftime('%H:%M:%S')
-st.caption(f"台灣時間: {current_time}")
+st.caption(f"系統時間 (台灣): {current_time}")
 
 tab1, tab2, tab3, tab4 = st.tabs(["📉 盤中轉弱", "💣 誘多假突破", "🔥 隔日沖雷達", "🧮 計算機"])
 
 # === 分頁 1: 盤中轉弱 ===
 with tab1:
     st.markdown("### 📉 盤中轉弱雷達")
-    # 更新時間顯示
-    if 'last_update_1' not in st.session_state:
-        st.session_state.last_update_1 = "尚未掃描"
     
+    # 使用 session_state 來強制刷新
+    if 'refresh_key' not in st.session_state:
+        st.session_state.refresh_key = 0
+
     if st.button("掃描轉弱股 (跌幅大優先)", key="btn1", use_container_width=True):
-        st.cache_data.clear() # 強制清除快取
-        st.session_state.last_update_1 = datetime.now(tz).strftime('%H:%M:%S')
+        st.session_state.refresh_key += 1 # 強制更新金鑰
+        st.cache_data.clear() # 清除所有快取
+        
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
+        
+        # 顯示當下掃描時間
+        scan_time = datetime.now(tz).strftime('%H:%M:%S')
+        
         try:
-            data = yf.download(tickers, period="5d", group_by='ticker', progress=False)
+            # 這裡不使用快取，直接抓取
+            data = yf.download(tickers, period="5d", group_by='ticker', progress=False, interval="1d")
+            
             for i, code in enumerate(SCAN_TARGETS):
                 try:
                     df = data[f"{code}.TW"]
                     if df.empty: continue
+                    # 抓最新一筆 (即時)
                     row = df.iloc[-1]
                     if pd.isna(row['Open']): continue
                     
@@ -106,10 +123,11 @@ with tab1:
                 progress.progress((i+1)/len(SCAN_TARGETS))
             progress.empty()
             
-            # 排序：跌幅最大的排最上面 (您要求的更新股要在上面)
+            # 排序：跌幅最大的排最上面
             results.sort(key=lambda x: x['drop'], reverse=True)
             
-            st.markdown(f"<div class='update-time'>最後更新: {st.session_state.last_update_1}</div>", unsafe_allow_html=True)
+            # 顯示強制更新時間
+            st.markdown(f"<div class='update-time'>✅ 掃描完成！資料時間: {scan_time}</div>", unsafe_allow_html=True)
             
             if not results: st.info("目前無轉弱股")
             else:
@@ -122,6 +140,7 @@ with tab2:
     st.markdown("### 💣 盤中誘多偵測")
     if st.button("掃描假突破 (回落大優先)", key="btn2", use_container_width=True):
         st.cache_data.clear()
+        scan_time = datetime.now(tz).strftime('%H:%M:%S')
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
@@ -151,7 +170,7 @@ with tab2:
             # 排序：回落幅度(diff)最大的排最上面
             results.sort(key=lambda x: x['diff'], reverse=True)
             
-            st.markdown(f"<div class='update-time'>更新完成</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='update-time'>✅ 掃描完成！資料時間: {scan_time}</div>", unsafe_allow_html=True)
             
             if not results: st.info("無假突破訊號")
             else:
@@ -164,6 +183,7 @@ with tab3:
     st.markdown("### 🔥 隔日沖雷達")
     if st.button("掃描強勢股 (漲幅大優先)", key="btn3", use_container_width=True):
         st.cache_data.clear()
+        scan_time = datetime.now(tz).strftime('%H:%M:%S')
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
@@ -195,7 +215,7 @@ with tab3:
             # 排序：漲幅最大的排最上面
             results.sort(key=lambda x: x['pct'], reverse=True)
             
-            st.markdown(f"<div class='update-time'>資料日期: {results[0]['date'] if results else 'N/A'}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='update-time'>✅ 掃描完成！資料時間: {scan_time}</div>", unsafe_allow_html=True)
             
             if not results: st.warning("無資料")
             else:
