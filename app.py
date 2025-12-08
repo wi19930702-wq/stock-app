@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, time as dt_time
 import pytz
 
 # --- 1. 頁面設定 ---
@@ -20,13 +20,32 @@ st.markdown("""
     .date-badge { background-color: #444; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px; float: right; }
     .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 5px; color: white; background-color: #555; }
     
-    /* 發現時間標籤 */
+    /* 狀態列 */
+    .status-bar {
+        text-align: center;
+        padding: 8px;
+        border-radius: 5px;
+        font-weight: bold;
+        margin-bottom: 15px;
+        font-size: 16px;
+    }
+    .status-open { background-color: #1b5e20; color: white; }
+    .status-close { background-color: #b71c1c; color: white; }
+    
+    /* 發現時間小標籤 */
     .found-time {
         font-size: 12px;
         color: #ffeb3b;
         font-weight: bold;
         float: right;
         margin-top: 2px;
+    }
+    
+    .update-time {
+        text-align: center;
+        color: #aaa;
+        font-size: 12px;
+        margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -61,10 +80,21 @@ def calculate_cdp(high, low, close):
 
 # --- 4. 介面設計 ---
 st.title("⚡ 極速當沖戰情室")
-# 定義台灣時區
-tw_tz = pytz.timezone('Asia/Taipei')
-current_time = datetime.now(tw_tz).strftime('%H:%M:%S')
-st.caption(f"台灣時間: {current_time}")
+tz = pytz.timezone('Asia/Taipei')
+now = datetime.now(tz)
+current_time_str = now.strftime('%H:%M:%S')
+
+# 判斷盤勢狀態 (09:00 - 13:30)
+# 這裡簡單判斷：如果是下午1點半以後，就當作收盤
+is_market_open = (now.time() >= dt_time(9, 0)) and (now.time() <= dt_time(13, 30))
+
+status_html = ""
+if is_market_open:
+    status_html = f"<div class='status-bar status-open'>🟢 盤中交易中 (監控啟動) - {current_time_str}</div>"
+else:
+    status_html = f"<div class='status-bar status-close'>🔴 已收盤 (數據已結算) - {current_time_str}</div>"
+
+st.markdown(status_html, unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4 = st.tabs(["📉 盤中轉弱", "💣 誘多假突破", "🔥 隔日沖雷達", "🧮 計算機"])
 
@@ -75,15 +105,29 @@ with tab1:
     # 紀錄發現時間
     if 'weak_found_time' not in st.session_state:
         st.session_state.weak_found_time = {}
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        scan_btn = st.button("掃描轉弱股", key="btn1", use_container_width=True)
+    with col2:
+        reset_btn = st.button("清除記憶", key="reset1", use_container_width=True)
+        
+    if reset_btn:
+        st.session_state.weak_found_time = {}
+        st.cache_data.clear()
+        st.rerun()
 
-    if st.button("掃描轉弱股", key="btn1", use_container_width=True):
+    if scan_btn:
         st.cache_data.clear()
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
         
-        # 取得當下的台灣時間 (HH:MM)
-        scan_time_short = datetime.now(tw_tz).strftime('%H:%M')
+        # 決定時間標籤顯示什麼
+        if is_market_open:
+            scan_time_display = now.strftime('%H:%M') # 盤中顯示時間
+        else:
+            scan_time_display = "收盤已定" # 盤後顯示文字
         
         try:
             data = yf.download(tickers, period="5d", group_by='ticker', progress=False)
@@ -103,28 +147,36 @@ with tab1:
                         name = STOCK_MAP.get(code, code)
                         drop = ((open_p - now_p) / open_p) * 100
                         
-                        # 如果是第一次發現，記錄現在的台灣時間
+                        # 第一次發現才記錄時間
                         if code not in st.session_state.weak_found_time:
-                            st.session_state.weak_found_time[code] = scan_time_short
+                            st.session_state.weak_found_time[code] = scan_time_display
                         
                         found_at = st.session_state.weak_found_time[code]
                         current_weak_codes.append(code)
                         
-                        results.append({"code":code, "name":name, "now":now_p, "open":open_p, "drop":drop, "found_at":found_at})
+                        vol = int(row['Volume']) if 'Volume' in row else 0
+                        
+                        results.append({"code":code, "name":name, "now":now_p, "open":open_p, "drop":drop, "found_at":found_at, "vol": vol})
                 except: continue
                 progress.progress((i+1)/len(SCAN_TARGETS))
             
-            # 清除舊的記錄
+            # 清理記憶
             for code in list(st.session_state.weak_found_time.keys()):
                 if code not in current_weak_codes:
                     del st.session_state.weak_found_time[code]
             
             progress.empty()
             results.sort(key=lambda x: x['drop'], reverse=True)
+            
+            st.markdown(f"<div class='update-time'>✅ 掃描完成 (系統時間: {current_time_str})</div>", unsafe_allow_html=True)
+            
             if not results: st.info("目前無轉弱股")
             else:
                 for s in results:
-                    st.markdown(f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><div style="text-align:right;"><span class="tag" style="background-color:#1b5e20;">跌破開盤 {round(s['drop'], 2)}%</span><br><span class="found-time">發現時間: {s['found_at']}</span></div></div><div style="display:flex; justify-content:space-between; margin-top:10px;"><div><div style="font-size:11px; color:#aaa;">開盤價</div><div style="color:white; font-weight:bold;">{s['open']}</div></div><div><div style="font-size:11px; color:#aaa;">目前價</div><div style="color:#00e676; font-weight:bold; font-size:22px;">{s['now']}</div></div></div></div>""", unsafe_allow_html=True)
+                    # 如果盤後，字體顏色換一下
+                    time_display = s['found_at']
+                    
+                    st.markdown(f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><div style="text-align:right;"><span class="tag" style="background-color:#1b5e20;">跌破開盤 {round(s['drop'], 2)}%</span><br><span class="found-time">{time_display}</span></div></div><div style="display:flex; justify-content:space-between; margin-top:10px;"><div><div style="font-size:11px; color:#aaa;">開盤價</div><div style="color:white; font-weight:bold;">{s['open']}</div></div><div><div style="font-size:11px; color:#aaa;">目前價</div><div style="color:#00e676; font-weight:bold; font-size:22px;">{s['now']}</div></div></div><div style="font-size:11px; color:#aaa; margin-top:5px;">成交量: {int(s['vol']/1000)} 張</div></div>""", unsafe_allow_html=True)
         except: st.error("連線忙碌中")
 
 # === 分頁 2: 誘多假突破 ===
@@ -142,14 +194,11 @@ with tab2:
                     df = data[f"{code}.TW"]
                     valid_rows = df.dropna(subset=['Close'])
                     if len(valid_rows) < 2: continue
-                    
                     prev_row = valid_rows.iloc[-2]
                     nh = calculate_cdp(prev_row['High'], prev_row['Low'], prev_row['Close'])[1]
-                    
                     curr_row = valid_rows.iloc[-1]
                     now_p = float(curr_row['Close'])
                     high_p = float(curr_row['High'])
-                    
                     if high_p > nh and now_p < nh:
                         name = STOCK_MAP.get(code, code)
                         results.append({"code":code, "name":name, "now":now_p, "high":high_p, "nh":nh})
@@ -177,19 +226,15 @@ with tab3:
                     df = data[f"{code}.TW"]
                     valid_rows = df.dropna(subset=['Close', 'Volume'])
                     if valid_rows.empty: continue
-                    
                     row = valid_rows.iloc[-1]
                     vol = int(row['Volume'])
                     if vol < 500000: continue
-                    
                     close = float(row['Close'])
                     op = float(row['Open'])
                     pct = ((close - op) / op) * 100 if op > 0 else 0
-                    
                     name = STOCK_MAP.get(code, code)
                     ah, nh, nl, al, cdp = calculate_cdp(row['High'], row['Low'], close)
                     date_str = str(row.name)[:10]
-                    
                     results.append({"code":code, "name":name, "vol":int(vol/1000), "close":close, "pct":pct, "nh":nh, "nl":nl, "date":date_str})
                 except: continue
                 progress.progress((i+1)/len(SCAN_TARGETS))
