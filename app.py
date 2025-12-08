@@ -20,32 +20,13 @@ st.markdown("""
     .date-badge { background-color: #444; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px; float: right; }
     .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 5px; color: white; background-color: #555; }
     
-    /* 更新時間標籤 */
-    .update-time {
-        text-align: center;
-        background-color: #d32f2f;
-        color: white;
-        padding: 8px;
-        border-radius: 5px;
-        font-weight: bold;
-        margin-bottom: 15px;
-        font-size: 14px;
-        animation: pulse 2s infinite;
-    }
-    
-    /* 發現時間小標籤 */
+    /* 發現時間標籤 */
     .found-time {
         font-size: 12px;
         color: #ffeb3b;
         font-weight: bold;
         float: right;
         margin-top: 2px;
-    }
-
-    @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.8; }
-        100% { opacity: 1; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -80,9 +61,10 @@ def calculate_cdp(high, low, close):
 
 # --- 4. 介面設計 ---
 st.title("⚡ 極速當沖戰情室")
-tz = pytz.timezone('Asia/Taipei')
-current_time = datetime.now(tz).strftime('%H:%M:%S')
-st.caption(f"系統時間 (台灣): {current_time}")
+# 定義台灣時區
+tw_tz = pytz.timezone('Asia/Taipei')
+current_time = datetime.now(tw_tz).strftime('%H:%M:%S')
+st.caption(f"台灣時間: {current_time}")
 
 tab1, tab2, tab3, tab4 = st.tabs(["📉 盤中轉弱", "💣 誘多假突破", "🔥 隔日沖雷達", "🧮 計算機"])
 
@@ -90,27 +72,22 @@ tab1, tab2, tab3, tab4 = st.tabs(["📉 盤中轉弱", "💣 誘多假突破", "
 with tab1:
     st.markdown("### 📉 盤中轉弱雷達")
     
-    # 初始化 session state 來記錄發現時間
+    # 紀錄發現時間
     if 'weak_found_time' not in st.session_state:
-        st.session_state.weak_found_time = {} # 格式: {code: "HH:MM:SS"}
-    if 'refresh_key' not in st.session_state:
-        st.session_state.refresh_key = 0
+        st.session_state.weak_found_time = {}
 
-    if st.button("掃描轉弱股 (跌幅大優先)", key="btn1", use_container_width=True):
-        st.session_state.refresh_key += 1
+    if st.button("掃描轉弱股", key="btn1", use_container_width=True):
         st.cache_data.clear()
-        
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
-        scan_time = datetime.now(tz).strftime('%H:%M:%S')
-        # 簡單的時分顯示 (例如 09:30)
-        scan_time_short = datetime.now(tz).strftime('%H:%M')
+        
+        # 取得當下的台灣時間 (HH:MM)
+        scan_time_short = datetime.now(tw_tz).strftime('%H:%M')
         
         try:
-            data = yf.download(tickers, period="5d", group_by='ticker', progress=False, interval="1d")
-            
-            current_weak_codes = [] # 用來記錄這一輪有哪些股票是弱的
+            data = yf.download(tickers, period="5d", group_by='ticker', progress=False)
+            current_weak_codes = []
             
             for i, code in enumerate(SCAN_TARGETS):
                 try:
@@ -121,54 +98,40 @@ with tab1:
                     
                     now_p = float(row['Close'])
                     open_p = float(row['Open'])
-                    vol = int(row['Volume'])
                     
-                    if vol < 500000: continue
-                    
-                    # 邏輯：現價 < 開盤 (轉弱)
                     if now_p < open_p:
                         name = STOCK_MAP.get(code, code)
                         drop = ((open_p - now_p) / open_p) * 100
                         
-                        # --- 時間記憶邏輯 ---
-                        # 如果這檔股票之前沒出現過，記錄現在時間
+                        # 如果是第一次發現，記錄現在的台灣時間
                         if code not in st.session_state.weak_found_time:
                             st.session_state.weak_found_time[code] = scan_time_short
                         
-                        # 取出發現時間
                         found_at = st.session_state.weak_found_time[code]
                         current_weak_codes.append(code)
                         
-                        results.append({
-                            "code":code, "name":name, "now":now_p, "open":open_p, 
-                            "drop":drop, "vol":vol, "found_at": found_at
-                        })
+                        results.append({"code":code, "name":name, "now":now_p, "open":open_p, "drop":drop, "found_at":found_at})
                 except: continue
                 progress.progress((i+1)/len(SCAN_TARGETS))
             
-            # 清理舊資料：如果某檔股票這次沒出現(漲回去了)，就從記憶中刪除
-            # 這樣下次它再跌下來時，會顯示新的時間
+            # 清除舊的記錄
             for code in list(st.session_state.weak_found_time.keys()):
                 if code not in current_weak_codes:
                     del st.session_state.weak_found_time[code]
             
             progress.empty()
             results.sort(key=lambda x: x['drop'], reverse=True)
-            
-            st.markdown(f"<div class='update-time'>✅ 掃描完成！資料時間: {scan_time}</div>", unsafe_allow_html=True)
-            
             if not results: st.info("目前無轉弱股")
             else:
                 for s in results:
-                    st.markdown(f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><div style="text-align:right;"><span class="tag" style="background-color:#1b5e20;">跌破開盤 {round(s['drop'], 2)}%</span><br><span class="found-time">發現時間: {s['found_at']}</span></div></div><div style="display:flex; justify-content:space-between; margin-top:10px;"><div><div style="font-size:11px; color:#aaa;">開盤價</div><div style="color:white; font-weight:bold;">{s['open']}</div></div><div><div style="font-size:11px; color:#aaa;">目前價</div><div style="color:#00e676; font-weight:bold; font-size:22px;">{s['now']}</div></div></div><div style="font-size:11px; color:#aaa; margin-top:5px;">成交量: {int(s['vol']/1000)} 張</div></div>""", unsafe_allow_html=True)
-        except: st.error("連線忙碌中，請重試")
+                    st.markdown(f"""<div class="stock-card card-green"><div style="display:flex; justify-content:space-between;"><div><span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span> <span style="color:#aaa;">{s['code']}</span></div><div style="text-align:right;"><span class="tag" style="background-color:#1b5e20;">跌破開盤 {round(s['drop'], 2)}%</span><br><span class="found-time">發現時間: {s['found_at']}</span></div></div><div style="display:flex; justify-content:space-between; margin-top:10px;"><div><div style="font-size:11px; color:#aaa;">開盤價</div><div style="color:white; font-weight:bold;">{s['open']}</div></div><div><div style="font-size:11px; color:#aaa;">目前價</div><div style="color:#00e676; font-weight:bold; font-size:22px;">{s['now']}</div></div></div></div>""", unsafe_allow_html=True)
+        except: st.error("連線忙碌中")
 
 # === 分頁 2: 誘多假突破 ===
 with tab2:
     st.markdown("### 💣 盤中誘多偵測")
-    if st.button("掃描假突破 (回落大優先)", key="btn2", use_container_width=True):
+    if st.button("掃描假突破", key="btn2", use_container_width=True):
         st.cache_data.clear()
-        scan_time = datetime.now(tz).strftime('%H:%M:%S')
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
@@ -189,15 +152,10 @@ with tab2:
                     
                     if high_p > nh and now_p < nh:
                         name = STOCK_MAP.get(code, code)
-                        diff = high_p - now_p
-                        results.append({"code":code, "name":name, "now":now_p, "high":high_p, "nh":nh, "diff":diff})
+                        results.append({"code":code, "name":name, "now":now_p, "high":high_p, "nh":nh})
                 except: continue
                 progress.progress((i+1)/len(SCAN_TARGETS))
             progress.empty()
-            results.sort(key=lambda x: x['diff'], reverse=True)
-            
-            st.markdown(f"<div class='update-time'>✅ 掃描完成！資料時間: {scan_time}</div>", unsafe_allow_html=True)
-            
             if not results: st.info("無假突破訊號")
             else:
                 for s in results:
@@ -207,9 +165,8 @@ with tab2:
 # === 分頁 3: 隔日沖雷達 ===
 with tab3:
     st.markdown("### 🔥 隔日沖雷達")
-    if st.button("掃描強勢股 (漲幅大優先)", key="btn3", use_container_width=True):
+    if st.button("掃描熱門股", key="btn3", use_container_width=True):
         st.cache_data.clear()
-        scan_time = datetime.now(tz).strftime('%H:%M:%S')
         progress = st.progress(0)
         tickers = [f"{c}.TW" for c in SCAN_TARGETS]
         results = []
@@ -238,9 +195,6 @@ with tab3:
                 progress.progress((i+1)/len(SCAN_TARGETS))
             progress.empty()
             results.sort(key=lambda x: x['pct'], reverse=True)
-            
-            st.markdown(f"<div class='update-time'>✅ 掃描完成！資料時間: {scan_time}</div>", unsafe_allow_html=True)
-            
             if not results: st.warning("無資料")
             else:
                 for s in results:
